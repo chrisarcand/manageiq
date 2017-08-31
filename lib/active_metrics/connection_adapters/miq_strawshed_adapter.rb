@@ -11,7 +11,6 @@ module ActiveMetrics
       end
 
       def write_multiple(*metrics)
-        binding.pry
         metrics.flatten!
 
         flatten_metrics(metrics).each do |interval_name, by_resource|
@@ -42,12 +41,22 @@ module ActiveMetrics
         raise NotImplementedError, "#{self.class} cannot process intervals of type #{interval_name}" unless interval_name == 'realtime'
         log_header = "[#{interval_name}]"
         _log.info("#{log_header} Processing #{data.length} performance rows...")
+        rows = []
 
         Benchmark.realtime_block(:process_perfs) do
-          binding.pry
+          data.each do |metric|
+            values = metric.except(*%i(capture_interval_name capture_interval resource_name timestamp))
+
+            rows << "('%s', '%s', '%s', '%s')" % [metric[:timestamp], resource.id, resource.type, values.to_json]
+          end
         end
 
         Benchmark.realtime_block(:process_perfs_db) do
+          query = <<-SQL
+            INSERT INTO strawshed_metrics (timestamp, resource_id, resource_type, values) VALUES
+              #{rows.join(',')};
+          SQL
+          raw_connection.execute(query)
         end
 
         _log.info("#{log_header} Processing #{data.length} performance rows...Complete")
