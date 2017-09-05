@@ -13,45 +13,47 @@ module ActiveMetrics
       def write_multiple(*metrics)
         metrics.flatten!
 
-        flatten_metrics(metrics).each do |interval_name, by_resource|
-          by_resource.each do |resource, by_timestamp|
-            data       = by_timestamp.values
-            write_rows(interval_name, resource, data)
-          end
-        end
-
-        metrics
+        write_rows(denormalized_metrics(metrics))
       end
 
       private
 
-      def flatten_metrics(metrics)
+      # Output:
+      # {
+      #   resource_1 => {
+      #     timestamp_1 => { metric_name_1 => value_1, metric_name_2 => value_2 }
+      #     timestamp_2 => { metric_name_1 => value_3, metric_name_2 => value_4 }
+      #   },
+      #   resource_2 => { ...
+      # }
+      def denormalized_metrics(raw_metrics)
         {}.tap do |index|
-          metrics.each do |m|
-            interval_name = m.fetch_path(:tags, :capture_interval_name)
+          raw_metrics.each do |m|
             resource = m[:resource] || m.fetch_path(:tags, :resource_type).safe_constantize.find(m.fetch_path(:tags, :resource_id))
-            fields = index.fetch_path(interval_name, resource, m[:timestamp]) || m[:tags].symbolize_keys.except(:resource_type, :resource_id).merge(:timestamp => m[:timestamp])
-            fields[m[:metric_name].to_sym] = m[:value]
-            index.store_path(interval_name, resource, m[:timestamp], fields)
+            metric_name = m[:metric_name].to_sym
+            metric_value = m[:value]
+
+            values = index.fetch_path(resource, m[:timestamp]) || {}
+            index.store_path(resource, m[:timestamp], values.merge(metric_name => m[:value]))
           end
         end
       end
 
-      def write_rows(interval_name, resource, data)
-        raise NotImplementedError, "#{self.class} cannot process intervals of type #{interval_name}" unless interval_name == 'realtime'
-        log_header = "[#{interval_name}]"
-        _log.info("#{log_header} Processing #{data.length} performance rows...")
+      def write_rows(data)
+        log_header = "[realtime]" # This adapter ONLY writes realtime metrics, currently
+        _log.info("#{log_header} Processing all performance rows...")
         rows = []
 
         Benchmark.realtime_block(:process_perfs) do
-          data.each do |metric|
-            values = metric.except(*%i(capture_interval_name capture_interval resource_name timestamp))
-
-            rows << "('%s', '%s', '%s', '%s')" % [metric[:timestamp], resource.id, resource.type, values.to_json]
+          data.each do |resource, by_timestamp|
+            by_timestamp.each do |timestamp, values|
+              rows << "('%s', '%s', '%s', '%s')" % [timestamp, resource.id, resource.type, values.to_json]
+            end
           end
         end
 
         Benchmark.realtime_block(:process_perfs_db) do
+          # TODO: ON CONFLICT hook to merge values for idempotent captures
           query = <<-SQL
             INSERT INTO strawshed_metrics (timestamp, resource_id, resource_type, values) VALUES
               #{rows.join(',')};
