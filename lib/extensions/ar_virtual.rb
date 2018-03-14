@@ -618,7 +618,7 @@ module ActiveRecord
     # rubocop:disable Style/BlockDelimiters, Layout/SpaceAfterComma, Style/HashSyntax
     # rubocop:disable Layout/AlignHash, Metrics/AbcSize, Metrics/MethodLength
     class JoinDependency
-      def instantiate(result_set, aliases)
+      def instantiate(result_set, &block)
         primary_key = aliases.column_alias(join_root, join_root.primary_key)
 
         seen = Hash.new { |i, object_id|
@@ -686,7 +686,7 @@ module ActiveRecord
         message_bus.instrument('instantiation.active_record', payload) do
           result_set.each { |row_hash|
             parent_key = primary_key ? row_hash[primary_key] : row_hash
-            parent = parents[parent_key] ||= join_root.instantiate(row_hash, column_aliases)
+            parent = parents[parent_key] ||= join_root.instantiate(row_hash, column_aliases, &block)
             construct(parent, join_root, row_hash, result_set, seen, model_cache, aliases)
           }
         end
