@@ -714,10 +714,10 @@ module ActiveRecord
         real = without_virtual_includes
         return super if real.equal?(self)
 
-        recs = real.find_with_associations
+        recs, join_dep = real.find_with_associations { |relation, join_dependency| [relation, join_dependency] }
         MiqPreloader.preload(recs, preload_values + includes_values) if includes_values
 
-        recs
+        yield recs, join_dep
       end
 
       # From ActiveRecord::QueryMethods
